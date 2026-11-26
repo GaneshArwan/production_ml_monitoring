@@ -1,0 +1,41 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.Python
+build/
+dist/
+
+# Environments & Secrets
+.venv/
+venv/
+env/
+.env
+.env.*
+!.env.example
+
+# Caches & Notebooks
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.ipynb_checkpoints/
+.coverage
+htmlcov/
+
+# Local Tooling Indexes
+.codegraph/codegraph.db*
+
+# Generated ML Artifacts & Data
+models/*.joblib
+models/*.sha256
+models/*.json
+data/*.csv
+data/*.parquet
+reports/*.json
+reports/*.png
+!data/.gitkeep
+
+# OS
+.DS_Store
+Thumbs.db
