@@ -2,6 +2,8 @@
 
 Monitor credit-risk models in production by tracking covariate shift, categorical drift, upstream data-quality failures, and classification decay across monthly batches. The system flags distribution shifts with statistical tests before ground-truth labels degrade model decisions.
 
+Live demo: https://ml-drift-monitoring.streamlit.app/
+
 ![Production feature drift and model performance trends](docs/assets/drift_performance_trends.png)
 
 ## Quick Start
