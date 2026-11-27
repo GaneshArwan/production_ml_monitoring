@@ -1,41 +1,49 @@
 # Production ML Monitoring Dashboard
 
-## Problem Statement
-Detect covariate shift, categorical distribution drift, upstream data-quality degradation, and classification performance decay in a deployed credit-risk model before silent accuracy loss impacts production decisions.
+Monitor credit-risk models in production by tracking covariate shift, categorical drift, upstream data-quality failures, and classification decay across monthly batches. The system flags distribution shifts with statistical tests before ground-truth labels degrade model decisions.
 
-## Dataset
-- **Source:** Deterministic synthetic credit-risk dataset (`src/data_generator.py`, `seed=42`) simulating a clean training reference window and six monthly production batches with progressive covariate shift, label/concept shift, missingness, and out-of-range corruption.
-- **Size:** `22,000` rows x `8` features (`10,000` reference rows; `12,000` production rows across `2026-01` through `2026-06`, `2,000` rows per batch).
-- **Features:**
-  - Numeric (`6`): `income`, `debt_to_income`, `credit_score`, `utilization_rate`, `account_age_months`, `num_inquiries`
-  - Categorical (`2`): `employment_type`, `region`
-  - Target (`1`): binary `default` indicator (`28.4%` positive rate on reference holdout)
+![Production feature drift and model performance trends](docs/assets/drift_performance_trends.png)
 
-## Skills Demonstrated
-Model monitoring, statistical drift detection (PSI, Kolmogorov-Smirnov, Chi-square), data-quality guardrails, threshold alerting, MLOps retraining playbooks, localized reporting (`en` / `id`), and interactive Streamlit visualization.
+## Quick Start
 
-## Deliverables
-- Statistical data drift engine (`src/drift.py`) using quantile-binned Population Stability Index (PSI), two-sample KS test, and Chi-square test
-- Data quality checks tracking missingness, duplicate rate, and schema range violations
-- Runtime security and validation guardrails (`src/schemas.py`, `src/guardrails.py`) with strict Pydantic v2 models, path traversal blocking, and SHA-256 verification before `joblib.load`
-- Configurable alerting engine (`src/alerting.py`) with `Babel`-backed `en` and `id` localization (`src/i18n.py`)
-- Interactive Streamlit dashboard (`app.py`) and batch trend plot (`reports/drift_performance_trends.png`)
-- Operational retraining and rollback guide (`docs/RETRAINING_PLAYBOOK.md`)
+Install dependencies, train the baseline model, run batch monitoring, and launch the interactive dashboard:
 
-## Approach
-1. **Data Cleaning & EDA** (`notebooks/01_eda.ipynb`) - Quantified missingness growth (`0.3%` to `4.4%` across feature cells), out-of-range boundary violations, and feature distribution shifts across monthly slices.
-2. **Feature Engineering & Preprocessing** (`src/train.py`) - Built an `sklearn.pipeline.Pipeline` with `ColumnTransformer` applying median imputation + `StandardScaler` on numeric features and most-frequent imputation + `OneHotEncoder(handle_unknown="ignore")` on categorical features.
-3. **Modeling** (`src/train.py`, `notebooks/02_modeling.ipynb`) - Trained a `HistGradientBoostingClassifier` (`max_iter=150`, `learning_rate=0.06`, `max_leaf_nodes=31`, `random_state=42`) on an 80/20 stratified split of the reference window.
-4. **Evaluation** - Evaluated with 5-fold `StratifiedKFold` cross-validation on the training split and verified on the 20% holdout set (`2,000` rows).
+```bash
+pip install -r requirements.txt
+python src/train.py
+python src/monitor.py
+streamlit run app.py
+```
 
-## Key Results
+Run the test suite:
+
+```bash
+pytest -v
+```
+
+## Dataset and Drift Simulation
+
+The deterministic generator (`src/data_generator.py`, `seed=42`) creates `22,000` credit-risk records across `8` features and a binary `default` target (`28.4%` positive rate on reference holdout):
+
+- Reference window: `10,000` clean records used for training and statistical baselines
+- Production batches: `6` monthly slices (`2026-01` through `2026-06`, `2,000` rows each, `12,000` total)
+- Numeric features (`6`): `income`, `debt_to_income`, `credit_score`, `utilization_rate`, `account_age_months`, `num_inquiries`
+- Categorical features (`2`): `employment_type`, `region`
+
+Batches `2026-01` and `2026-02` stay close to the reference distribution. Starting in `2026-03`, progressive covariate shift, missingness (`0.3%` to `4.4%`), out-of-range corruption, and concept shift degrade both feature stability and discrimination.
+
+## Baseline Model Validation
+
+`src/train.py` fits an `sklearn.pipeline.Pipeline` with median/most-frequent imputation, `StandardScaler`, `OneHotEncoder(handle_unknown="ignore")`, and a `HistGradientBoostingClassifier` (`max_iter=150`, `learning_rate=0.06`, `max_leaf_nodes=31`, `random_state=42`) on an 80/20 stratified reference split:
 
 | Evaluation Split | AUC-ROC | Precision | Recall | F1 |
 |---|---|---|---|---|
-| 5-Fold Stratified CV (mean) | 0.7823 +/- 0.0135 | 0.6328 | 0.4269 | 0.5092 |
-| Reference Holdout (`n=2,000`) | 0.7913 | 0.6463 | 0.4665 | 0.5419 |
+| 5-fold stratified CV (mean) | 0.7823 +/- 0.0135 | 0.6328 | 0.4269 | 0.5092 |
+| Reference holdout (`n=2,000`) | 0.7913 | 0.6463 | 0.4665 | 0.5419 |
 
 ## Batch Monitoring Trajectory
+
+Running `python src/monitor.py` against the baseline artifacts produces the following monthly progression:
 
 | Batch | Status | Max Feature PSI | AUC-ROC | Missing Rate | Alerts |
 |---|---|---|---|---|---|
@@ -47,36 +55,31 @@ Model monitoring, statistical drift detection (PSI, Kolmogorov-Smirnov, Chi-squa
 | `2026-06` | CRITICAL | 5.736 | 0.4118 | 0.044 | 15 |
 
 ## Key Findings
-1. Early covariate shifts trigger `WARNING` KS/Chi-square p-value alerts in `2026-02` (`max_psi=0.013`) and breach the `0.20` critical PSI ceiling in `2026-03` (`max_psi=0.364`) before severe AUC collapse occurs.
-2. Combined covariate and concept shift in `2026-04` through `2026-06` degrades `AUC-ROC` from `0.7913` baseline down to `0.6553`, `0.5228`, and `0.4118`, exceeding the `0.05` critical AUC drop threshold.
-3. Upstream ingestion defects (`4.4%` feature missingness and out-of-range values in `2026-06`) must be isolated before retraining per `docs/RETRAINING_PLAYBOOK.md`.
 
-## How to Run
-```bash
-pip install -r requirements.txt
-python src/train.py
-python src/monitor.py
-pytest -v
-streamlit run app.py
-```
+1. Two-sample KS and Chi-square tests catch early shift in `2026-02` (`3` `WARNING` alerts at `max_psi=0.013`), one month before feature PSI crosses the `0.20` critical ceiling in `2026-03` (`max_psi=0.364`).
+2. Concept and covariate drift from `2026-04` to `2026-06` drops holdout `AUC-ROC` from `0.7913` to `0.4118`, exceeding the `0.05` critical decay limit.
+3. Missingness rises to `4.4%` alongside negative `debt_to_income` and `>850` `credit_score` records in `2026-06`. Per `docs/RETRAINING_PLAYBOOK.md`, upstream ingestion defects must be quarantined before fitting a replacement model.
 
-## Files
-- `src/schemas.py` - Strict Pydantic v2 data, threshold, and report models
-- `src/guardrails.py` - Path traversal, row bounds, finite array, and SHA-256 verification
-- `src/i18n.py` - `Babel`-based `en` and `id` localization catalog and formatters
-- `src/data_generator.py` - Deterministic credit-risk reference and drifted batch generator
-- `src/drift.py` - PSI, KS, Chi-square, and data-quality evaluation
-- `src/performance.py` - Classification metrics (`AUC-ROC`, `Precision`, `Recall`, `F1`)
-- `src/alerting.py` - Configurable localized threshold alerting
-- `src/train.py` - Cross-validated training pipeline and artifact hashing
-- `src/monitor.py` - Batch monitoring CLI, JSON report export, and trend plotting
-- `app.py` - Interactive Streamlit monitoring dashboard
-- `docs/RETRAINING_PLAYBOOK.md` - Retraining triggers, shadow evaluation, and rollback steps
-- `notebooks/01_eda.ipynb` - Exploratory drift and data-quality analysis
-- `notebooks/02_modeling.ipynb` - Baseline training and monitoring verification
-- `tests/test_monitoring.py` - Unit and end-to-end integration test suite
+## Repository Layout
 
-## Methodology & Limitations
-Monitoring decouples statistical feature drift (quantile-binned PSI on reference edges, two-sample KS for numeric features, Chi-square for categorical features) from upstream data-quality checks (missingness, duplicates, schema bounds) and labeled model performance (`AUC-ROC`, `Precision`, `Recall`, `F1`). Model artifacts are verified against a stored SHA-256 digest prior to `joblib.load` deserialization.
+- `app.py` - Interactive Streamlit dashboard with threshold sliders, cached computation, and `en`/`id` localization
+- `src/schemas.py` - Strict Pydantic v2 schemas (`extra="forbid"`, `allow_inf_nan=False`)
+- `src/guardrails.py` - Path traversal checks, row bounds, finite array coercion, and SHA-256 + `hmac.compare_digest` verification before `joblib.load`
+- `src/i18n.py` - `Babel`-backed `en` and `id` catalogs and number/percent formatters
+- `src/data_generator.py` - Deterministic reference and drifted monthly batch simulator
+- `src/drift.py` - Quantile-binned PSI, two-sample KS, Chi-square, and data-quality checks
+- `src/performance.py` - Binary classification metrics (`AUC-ROC`, `Precision`, `Recall`, `F1`)
+- `src/alerting.py` - Configurable threshold evaluation for `WARNING` and `CRITICAL` alerts
+- `src/train.py` - Cross-validated training pipeline, schema validation, and SHA-256 digest export
+- `src/monitor.py` - CLI batch evaluator exporting `reports/monitoring_report.json` and trend plots
+- `docs/RETRAINING_PLAYBOOK.md` - Trigger matrix, pipeline isolation rules, shadow evaluation, and rollback steps
+- `notebooks/01_eda.ipynb` - Exploratory drift and missingness analysis
+- `notebooks/02_modeling.ipynb` - Baseline training and monitoring walkthrough
+- `tests/test_monitoring.py` - Unit and end-to-end integration tests (`98%` line coverage across `src/`)
+- `.github/workflows/ci.yml` - Manual-only (`workflow_dispatch`) verification workflow
 
-Performance monitoring assumes delayed ground-truth labels (`default`) become available for batch evaluation; in live credit workflows where outcomes take 30 to 90 days to mature, covariate drift (PSI/KS) and prediction-rate shifts serve as leading indicators while labeled evaluation lags. Synthetic drift magnitudes are accelerated across six batches to exercise every alert tier deterministically.
+## Methodology and Limitations
+
+Drift detection decouples distribution shifts (reference quantile PSI, two-sample KS, Chi-square) from ingestion quality (missingness, duplicates, schema range bounds) and supervised evaluation. Every model deserialization call (`joblib.load`) validates path containment, file size limits, and SHA-256 integrity against `models/baseline_model.sha256`.
+
+Supervised metrics assume ground-truth `default` labels arrive for each monthly batch. In live lending portfolios where repayment outcomes lag by 30 to 90 days, feature PSI, KS p-values, and predicted positive-rate shifts act as leading indicators until labeled outcomes mature.

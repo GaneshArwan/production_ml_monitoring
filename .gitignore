@@ -39,3 +39,7 @@ reports/*.png
 # OS
 .DS_Store
 Thumbs.db
+
+# Local Agent & Index Tooling
+.agents/
+.codegraph/
